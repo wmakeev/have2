@@ -1,228 +1,285 @@
+'use strict'
+
+var ARR_RX = /^(.+) a(rr(ay)?)?$/i
+var OR_RX = /^(.+) or (.+)$/i
+var OPT_RX = /^opt(ional)? (.+)$/i
+
+var isArray = function (value) { return Array.isArray(value) }
+var isObject = function (value) { return value != null && typeof value === 'object' }
+var isPlainObject = function (value) {
+  return Object.prototype.toString.call(value) === '[object Object]'
+}
+var isArguments = function (value) {
+  return isObject(value) && value.hasOwnProperty('callee') && !value.propertyIsEnumerable('callee')
+}
+
+var BUILT_IN_MATCHERS = {
+  // string
+  'string': function (value) {
+    return typeof value === 'string'
+  },
+  's|str': 'string',
+
+  // number
+  'number': function (value) {
+    return typeof value === 'number'
+  },
+  'n|num': 'number',
+
+  // boolean
+  'boolean': function (value) {
+    return typeof value === 'boolean'
+  },
+  'b|bool': 'boolean',
+
+  // function
+  'function': function (value) {
+    return typeof value === 'function'
+  },
+  'f|fun|func': 'function',
+
+  // array
+  'array': isArray,
+  'a|arr': 'array',
+
+  // object
+  'object': isObject,
+  'o|obj': 'object',
+
+  // regexp
+  'regexp': function (value) {
+    return value && value instanceof RegExp
+  },
+  'r|rx|regex': 'regexp',
+
+  // date
+  'date': function (value) {
+    return value && value instanceof Date
+  },
+  'd': 'date',
+
+  // Object
+  'Object': isPlainObject,
+  'Obj': 'Object'
+}
+
+var customAssert = function (test, msg) {
+  if (!test) {
+    if (msg === void 0) throw new Error(test + ' == true')
+    else throw new Error(msg)
+  }
+}
+
+var HAVE_ARGUMENTS_OBJECT = '@@have/argumentsObject'
+var HAVE_DEFAULT_MATCHER = '@@have/defaultMatcher'
+var ARGUMENTS_OBJECT_MATCHER = {}
+var DEFAULT_MATCHER = {}
+ARGUMENTS_OBJECT_MATCHER[HAVE_ARGUMENTS_OBJECT] = 'Object'
+DEFAULT_MATCHER[HAVE_DEFAULT_MATCHER] = function () { return false }
+
+// Object assign
+function assign () {
+  var args = Array.prototype.slice.call(arguments, 0)
+  var target = args[0]
+  var source = args.slice(1)
+  var i, len, p
+
+  for (i = 0, len = source.length; i < len; i++) {
+    for (p in source[i]) {
+      if (source[i].hasOwnProperty(p)) {
+        target[p] = source[i][p]
+      }
+    }
+  }
+  return target
+}
+
+// { 's|str': val1 } -> { 's': val1, 'str': val1 }
+function unfoldMatchers (matchers) {
+  var unfolded = {}
+  var variants, p, i, len
+
+  for (p in matchers) {
+    if (matchers.hasOwnProperty(p)) {
+      variants = p.split(/\|/)
+      for (i = 0, len = variants.length; i < len; i++) {
+        unfolded[variants[i]] = matchers[p]
+      }
+    }
+  }
+  return unfolded
+}
+
+// core recursive check
+function ensure (matchers, argName, argType, value, check) {
+  var memberType = null
+  var valid = true
+  var reason = null
+  var match = null
+  var typeValidator = null
+  var i = 0
+
+  function softAssert (cond, reason_) {
+    if (!(valid = cond)) reason = reason_
+  }
+
+  match = argType.match(OPT_RX)
+  if (match) {
+    memberType = match[2]
+    ensure(matchers, argName, memberType, value, softAssert)
+    return valid || value === null || value === void 0
+  }
+
+  match = argType.match(OR_RX)
+  if (match) {
+    memberType = match[1]
+    ensure(matchers, argName, memberType, value, softAssert)
+    if (valid) return true
+    valid = true // reset previous softAssert
+
+    memberType = match[2]
+    ensure(matchers, argName, memberType, value, softAssert)
+    check(valid, '`' + argName + '` is neither a ' + match[1] + ' nor ' + match[2])
+    return true
+  }
+
+  match = argType.match(ARR_RX)
+  if (match) {
+    ensure(matchers, argName, 'array', value, softAssert)
+    if (!valid) {
+      check(false, reason)
+      return false
+    }
+    memberType = match[1]
+    for (i = 0; i < value.length; i++) {
+      ensure(matchers, argName, memberType, value[i], softAssert)
+      if (!valid) {
+        check(false, '`' + argName + '` element is falsy or not a ' + memberType)
+        return false
+      }
+    }
+    return true
+  }
+
+  typeValidator = (function getValidator (t) {
+    var validator = null
+    argType = t
+    if (matchers.hasOwnProperty(t)) validator = matchers[t]
+    return typeof validator === 'string' ? getValidator(validator) : validator
+  })(argType)
+
+  valid = typeValidator ? typeValidator(value) : matchers[HAVE_DEFAULT_MATCHER](value)
+
+  check(valid, '`' + argName + '` is not ' + argType)
+  return true
+}
+
+function ensureArgs (args, schema, matchers, strict) {
+  var ensureResults = []
+  var parsedArgs = {}
+  var argIndex = 0
+  var argsKeys = []
+  var fail = null
+  var p, i, len, argName, ensured, argStr
+
+  // have schema check
+  if (schema instanceof Array) {
+    if (!schema.length) { throw new Error('have() called with empty schema list') }
+
+    for (i = 0, len = schema.length; i < len; i++) {
+      ensureResults[i] = ensureArgs(args, schema[i], matchers, strict)
+    }
+
+    ensureResults.sort(function (a, b) {
+      if (a.argIndex > b.argIndex) return -1
+      if (a.argIndex < b.argIndex) return 1
+      return 0
+    })
+
+    for (i = 0; i < ensureResults.length; i++) {
+      if (!ensureResults[i].fail) return ensureResults[i]
+    }
+
+    return ensureResults[0]
+  } else if (isPlainObject(schema)) {
+    // have `arguments` check
+    if (isArguments(args) || isArray(args)) {
+      for (i = 0, len = args.length; i < len; i++) { argsKeys[i] = i }
+    } else if (isPlainObject(args)) {
+      i = 0
+      for (p in args) {
+        if (args.hasOwnProperty(p)) { argsKeys[i++] = p }
+      }
+    } else {
+      throw new Error('have() `arguments` argument should be function arguments, array or object')
+    }
+
+    for (argName in schema) {
+      if (schema.hasOwnProperty(argName)) {
+        ensured = ensure(matchers, argName, schema[argName], args[argsKeys[argIndex]],
+          function (cond, fail_) { if (!cond) fail = fail_ })
+        if (fail) break
+        if (ensured) {
+          parsedArgs[argName] = args[argsKeys[argIndex]]
+          argIndex++
+        }
+      }
+    }
+
+    if (strict && !fail && argIndex < argsKeys.length) {
+      argStr = args[argIndex].toString()
+      fail = 'Unexpected argument "' + (argStr.length > 15
+        ? argStr.substring(0, 15) + '..'
+        : argStr) + '"'
+    }
+
+    return { fail: fail, parsedArgs: parsedArgs, argIndex: argIndex }
+  } else {
+    throw new Error('have() `schema` should be an array or an object')
+  }
+}
 
 // have.js - Main have.js exports
-module.exports = (function(undefined) {
+module.exports = (function () {
+  var assert = customAssert
 
-  var assert = require('assert')
-    , log    = function() { } // require('util').log; // disabled
-    ;
-
-  var ARR_RX = /^(.+) a(rr(ay)?)?$/i
-    , OR_RX  = /^(.+) or (.+)$/i
-    , OPT_RX = /^opt(ional)? (.+)$/i;
-
-  // tools functions
-
-  function assign () {
-    var args = Array.prototype.slice.call(arguments, 0)
-      , target = args[0]
-      , source = args.slice(1);
-
-    for (var i = 0, len = source.length; i < len; i++) {
-      for (var p in source[i]) {
-        if (source[i].hasOwnProperty(p)) {
-          target[p] = source[i][p];
-        }
-      }
+  function have (args, schema, strict) {
+    var res = ensureArgs(args, schema, this.matchers, strict)
+    if (HAVE_ARGUMENTS_OBJECT in res.parsedArgs) {
+      return have.call(this, res.parsedArgs[HAVE_ARGUMENTS_OBJECT], schema, strict)
     }
-
-    return target;
+    assert(!res.fail, res.fail)
+    return res.parsedArgs
   }
 
-  // { 's|str': val1 } -> { 's': val1, 'str': val1 }
-  function unfoldTypes (types) {
-    var unfolded = {};
-    for (var p in types) {
-      if (types.hasOwnProperty(p)) {
-        var variants = p.split(/\|/);
-        for (var i = 0, len = variants.length; i < len; i++) {
-          unfolded[variants[i]] = types[p]
-        }
-      }
-    }
-    return unfolded;
+  have.assert = function (assert_) {
+    return (assert_ === void 0) ? assert : (assert = assert_)
   }
 
-  // core recursive check
-  function ensure(types, argName, argType, value, check) {
-    var memberType = null
-      , valid      = true
-      , reason     = null
-      , match      = null
-      , i          = 0;
-
-    function softAssert(cond, reason_) {
-      if (!(valid = cond)) reason = reason_;
-    }
-
-    function logMatch() { log(match[0]); }
-
-    if (match = argType.match(OPT_RX)) {
-      logMatch();
-      memberType = match[2];
-
-      ensure(types, argName, memberType, value, softAssert);
-
-      // optional is consumed if it match or a null/undefined is given.
-      return valid ||
-        value === null ||
-        value === undefined;
-    }
-
-    if (match = argType.match(OR_RX)) {
-      logMatch();
-      memberType = match[1];
-      ensure(types, argName, memberType, value, softAssert);
-
-      if (valid) return true;
-      valid = true; // reset previous softAssert
-
-      memberType = match[2];
-      ensure(types, argName, memberType, value, softAssert);
-
-      check(valid, argName + " argument is neither a " + match[1] +
-        " nor " + match[2]);
-      return true;
-    }
-
-    if (match = argType.match(ARR_RX)) {
-      logMatch();
-      ensure(types, argName, 'array', value, softAssert);
-
-      if (!valid) {
-        check(false, reason);
-        return false;
-      }
-
-      memberType = match[1];
-      for (i = 0; i < value.length; i++) {
-        ensure(types, argName, memberType, value[i], softAssert);
-
-        if (!valid) {
-          check(false, argName + " element is falsy or not a " + memberType);
-          return false;
-        }
-      }
-
-      return true;
-    }
-
-    // atom types
-    log(argType);
-    valid = types.hasOwnProperty(argType)
-      ? types[argType](value)
-      : types.default(value);
-
-    check(valid, argName + " argument is not " + argType);
-    return true;
+  have.strict = function (args, schema) {
+    return this(args, schema, true)
   }
 
-  function ensureArgs(args, schema, types, strict) {
-    if (!(args && typeof args === 'object' && 'length' in args))
-      throw new Error('have() called with invalid arguments list');
-    if (!(schema && typeof schema === 'object'))
-      throw new Error('have() called with invalid schema object');
+  have.matchers = assign({}, ARGUMENTS_OBJECT_MATCHER, DEFAULT_MATCHER)
 
-    var ensureResults = []
-      , parsedArgs = {}
-      , argIndex = 0
-      , fail = null
-      , i;
+  have.argumentsObject = ARGUMENTS_OBJECT_MATCHER
 
-    if (schema instanceof Array) {
-      if (!schema.length)
-        throw new Error('have() called with empty schema list');
+  have.with = function (matchers) {
+    var _have = function () { return have.apply(_have, arguments) } // TODO Test
 
-      for (i = 0, len = schema.length; i < len; i++) {
-        ensureResults[i] = ensureArgs(args, schema[i], types, strict);
-      }
-
-      ensureResults.sort(function (a, b) {
-        if (a.argIndex > b.argIndex) return -1;
-        if (a.argIndex < b.argIndex) return 1;
-        return 0
-      });
-
-      for (i = 0; i < ensureResults.length; i++) {
-        if (!ensureResults[i].fail) return ensureResults[i];
-      }
-
-      return ensureResults[0];
-    } else {
-      for (var argName in schema) {
-        if (schema.hasOwnProperty(argName)) {
-          var ensured = ensure(types, argName, schema[argName], args[argIndex],
-            function (cond, fail_) { if (!cond) fail = fail_; });
-          if (fail) break;
-          if (ensured) {
-            parsedArgs[argName] = args[argIndex];
-            argIndex++;
-          }
-        }
-      }
-
-      if (strict && !fail && argIndex < args.length) {
-        var argStr = args[argIndex].toString();
-        fail = 'Wrong argument "' + (argStr.length > 15
-            ? argStr.substring(0, 15) + '..'
-            : argStr) + '"';
-      }
-
-      return {
-        fail: fail,
-        parsedArgs: parsedArgs,
-        argIndex: argIndex
-      }
+    if (!isPlainObject(matchers)) {
+      throw new Error('`checkers` argument must to be an object')
     }
+
+    return assign(_have, {
+      assert: have.assert,
+      strict: have.strict.bind(_have),
+      with: have.with,
+      matchers: assign({}, unfoldMatchers(this.matchers), unfoldMatchers(matchers)),
+      argumentsObject: have.argumentsObject
+    })
   }
 
-  // exports
-  function have(args, schema, strict) {
-    var res = ensureArgs(args, schema, this.types, strict);
-    assert(!res.fail, res.fail);
-    return res.parsedArgs;
-  }
-
-  // configuration
-  have.assert = function(assert_) {
-    return (assert_ === undefined) ? assert : (assert = assert_);
-  };
-
-  have.strict = function(args, schema) {
-    return this(args, schema, true);
-  };
-
-  have.types = {};
-
-  have.with = function (types) {
-    if (!(types && typeof types === 'object')) {
-      throw new Error('types argument must be an object')
-    }
-    var _have = function () { return have.apply(_have, arguments) };
-    _have.assert = have.assert;
-    _have.strict = have.strict.bind(_have);
-    _have.with = have.with;
-    _have.types = assign({}, unfoldTypes(this.types), unfoldTypes(types));
-
-    return _have;
-  };
-
-  return have.with(
-    // basic types
-    { 's|str|string': function (value) { return typeof value === 'string'; }
-    , 'n|num|number': function (value) { return typeof value === 'number'; }
-    , 'b|bool|boolean': function (value) { return typeof value === 'boolean'; }
-    , 'f|fun|func|function': function (value) {
-      return typeof value === 'function'; }
-    , 'a|arr|array': function (value) { return value instanceof Array }
-    , 'o|obj|object': function (value) {
-      return value && typeof value === 'object'; }
-
-    // built-in types
-    , 'r|rx|regex|regexp': function (value) {
-      return value && value instanceof RegExp }
-    , 'd|date': function (value) { return value && value instanceof Date }
-    , 'default': function () { return false; } }
-  );
-
-})();
+  return have.with(BUILT_IN_MATCHERS)
+})()
 
