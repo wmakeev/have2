@@ -1,6 +1,3 @@
-
-.DS_Store
-
 # node.js standard
 node_modules
 npm-debug.log
@@ -8,6 +5,17 @@ v8.log
 
 # test artifacts
 html-report/
-*-cov.js
 coverage/
+*-cov.js
+.nyc_output
 
+# IDE
+.idea
+.vscode
+
+# other
+*.DS_Store
+
+# temp files
+temp*
+_temp*
