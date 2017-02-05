@@ -62,6 +62,8 @@ var BUILT_IN_MATCHERS = {
   'Object': isPlainObject,
   'Obj': 'Object'
 }
+// TODO Add "any" matcher
+
 
 var customAssert = function (test, msg) {
   if (!test) {
@@ -227,10 +229,14 @@ function ensureArgs (args, schema, matchers, strict) {
     }
 
     if (strict && !fail && argIndex < argsKeys.length) {
-      argStr = args[argIndex].toString()
-      fail = 'Unexpected argument "' + (argStr.length > 15
-        ? argStr.substring(0, 15) + '..'
-        : argStr) + '"'
+      if (typeof argsKeys[argIndex] === 'string') {
+        fail = 'Unexpected `' + argsKeys[argIndex] + '` argument'
+      } else {
+        argStr = '' + args[argsKeys[argIndex]]
+        fail = 'Unexpected argument "' + (argStr.length > 15
+            ? argStr.substring(0, 15) + '..'
+            : argStr) + '"'
+      }
     }
 
     return { fail: fail, parsedArgs: parsedArgs, argIndex: argIndex }

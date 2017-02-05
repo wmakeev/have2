@@ -428,14 +428,23 @@ test('have with schema matchers variants', function (t) {
   t.end()
 })
 
-test('have with schema matchers variants (strict mode)', function (t) {
+test('have with unexpected and extra arguments (strict mode)', function (t) {
   var SCHEMA = { one: 'str', tow: 'num', three: 'opt str' }
 
   check(t).throwsIf({
     'wrong optional argument specified':
       [['str', 1, 777], SCHEMA, /Unexpected argument "777"/i],
-    'extra unnecessary argument specified':
-      [['str', 1, 'str', 'extra'], SCHEMA, /Unexpected argument "extra"/i]
+    'extra argument specified':
+      [['str', 1, 'str', 'extra'], SCHEMA, /Unexpected argument "extra"/i],
+    'extra undefined argument specified':
+      [['str', 1, 'str', undefined], SCHEMA, /Unexpected argument "undefined"/i],
+    'wrong argument specified in named arguments':
+      [{ one: 'str', tow: 2, extra: 3 }, SCHEMA, /Unexpected `extra` argument/i],
+    'extra argument specified in named arguments':
+      [{ one: 'str', tow: 2, three: 'str', extra: 55 }, SCHEMA, /Unexpected `extra` argument/i],
+    'extra undefined argument specified in named arguments':
+      [{ one: 'str', tow: 2, three: 'str', extra: undefined }, SCHEMA,
+        /Unexpected `extra` argument/i]
   }, true)
 
   t.end()
