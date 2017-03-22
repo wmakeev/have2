@@ -515,15 +515,20 @@ test('have with several schemas (strict mode)', function (t) {
 test('have with named arguments object', function (t) {
   var SCHEMA = { one: 'str', tow: 'str', three: 'opt num or num arr' }
 
+  check(t).doesNotThrowIf({
+    '{ one: String, tow: String, three: Number } object correspond to schema': [
+      { one: 'one', tow: 'tow', three: 3 }, SCHEMA,
+      { one: 'one', tow: 'tow', three: 3 }]
+  })
+
   check(t).throwsIf({
     '{ one: String, tow: Number, three: Number } object not correspond to schema': [
       { one: 'one', tow: 2, three: 3 }, SCHEMA, /`tow`.+is not/i]
   })
 
-  check(t).doesNotThrowIf({
-    '{ one: String, tow: String, three: Number } object correspond to schema': [
-      { one: 'one', tow: 'tow', three: 3 }, SCHEMA,
-      { one: 'one', tow: 'tow', three: 3 }]
+  check(t).throwsIf({
+    '{ one: String, tow: Number, three: Number } object not correspond to schema': [
+      { one: 'one', tou: 2, three: 3 }, SCHEMA, /foo/i]
   })
 
   t.end()
