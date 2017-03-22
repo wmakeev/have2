@@ -1,6 +1,6 @@
 {
   "name": "have2",
-  "version": "1.0.0",
+  "version": "1.0.0-beta.1",
   "description": "Slick arguments validator for javascript functions.",
   "main": "have.js",
   "scripts": {
